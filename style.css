@@ -1,0 +1,265 @@
+@font-face {
+    font-family: 'Kagueri-Fallback';
+    src: local('Arial');
+  }
+  :root{
+    --void:#05030A;
+    --deep:#0D0A18;
+    --magenta:#FF2E92;
+    --cyan:#00F0FF;
+    --gold:#FFD84D;
+    --violet:#7A2BFF;
+  }
+  *{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background: var(--void);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  #app{ position:fixed; inset:0; }
+  canvas{ display:block; width:100%; height:100%; }
+
+  .hidden{ display:none !important; }
+
+  /* ---------- shared type ---------- */
+  .display{
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 800;
+    font-style: italic;
+    letter-spacing: -0.01em;
+  }
+
+  /* ---------- START SCREEN ---------- */
+  #startScreen{
+    position:fixed; inset:0; z-index: 50;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:
+      radial-gradient(ellipse at 50% 20%, rgba(122,43,255,0.35), transparent 60%),
+      radial-gradient(ellipse at 50% 100%, rgba(255,46,146,0.25), transparent 55%),
+      var(--void);
+    text-align:center;
+    padding: 24px;
+  }
+  .kagueri-title{
+    font-size: clamp(48px, 12vw, 108px);
+    line-height: 0.95;
+    color:#fff;
+    text-shadow:
+      0 0 12px var(--magenta),
+      0 0 36px var(--magenta),
+      0 0 80px rgba(255,46,146,0.5);
+    margin: 0;
+    transform: skewX(-6deg);
+  }
+  .kagueri-sub{
+    font-size: clamp(14px, 3vw, 20px);
+    color: var(--cyan);
+    text-shadow: 0 0 10px var(--cyan), 0 0 24px rgba(0,240,255,0.6);
+    letter-spacing: 0.35em;
+    margin: 6px 0 40px;
+    font-weight: 600;
+  }
+  .start-btn{
+    pointer-events:auto;
+    cursor:pointer;
+    background: linear-gradient(180deg, rgba(255,46,146,0.15), rgba(255,46,146,0.05));
+    border: 1.5px solid var(--magenta);
+    color:#fff;
+    padding: 16px 52px;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    border-radius: 4px;
+    box-shadow: 0 0 24px rgba(255,46,146,0.4), inset 0 0 16px rgba(255,46,146,0.15);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    animation: pulseGlow 2.2s ease-in-out infinite;
+  }
+  .start-btn:hover{ transform: scale(1.04); }
+  @keyframes pulseGlow{
+    0%,100%{ box-shadow: 0 0 24px rgba(255,46,146,0.4), inset 0 0 16px rgba(255,46,146,0.15); }
+    50%{ box-shadow: 0 0 40px rgba(255,46,146,0.7), inset 0 0 24px rgba(255,46,146,0.3); }
+  }
+  .controls-legend{
+    margin-top: 34px;
+    color: rgba(255,255,255,0.55);
+    font-size: 12.5px;
+    letter-spacing: 0.06em;
+    line-height: 1.9;
+  }
+  .controls-legend b{ color: rgba(255,255,255,0.85); }
+  .credit-line{
+    position:absolute;
+    bottom: 18px;
+    left:0; right:0;
+    text-align:center;
+    color: rgba(255,255,255,0.28);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+  .bike-select-row{
+    display:flex; gap:14px; margin-bottom:34px; flex-wrap:wrap; justify-content:center;
+  }
+  .bike-swatch{
+    width:54px; height:54px; border-radius:10px; cursor:pointer;
+    border:2px solid rgba(255,255,255,0.15);
+    display:flex; align-items:center; justify-content:center;
+    transition: border-color .15s, transform .15s;
+    pointer-events:auto;
+  }
+  .bike-swatch.active{ border-color:#fff; transform: scale(1.08); }
+  .bike-swatch .dot{ width:26px; height:26px; border-radius:50%; }
+
+  /* ---------- HUD ---------- */
+  #hud{
+    position:fixed; inset:0; z-index:20; pointer-events:none;
+  }
+  .hud-panel{
+    position:absolute;
+    color:#fff;
+  }
+  #hud-topleft{
+    top: 18px; left: 18px;
+    display:flex; flex-direction:column; gap:4px;
+  }
+  .lap-badge{
+    font-size: 13px; letter-spacing:0.14em; color: var(--cyan);
+    text-shadow: 0 0 8px rgba(0,240,255,0.7);
+    font-weight:700;
+  }
+  .pos-badge{
+    font-size: 34px; font-weight:800; font-style:italic;
+    text-shadow: 0 0 10px var(--magenta);
+    line-height: 1;
+  }
+  .pos-badge sup{ font-size: 16px; }
+  #hud-topright{
+    top: 18px; right: 18px; text-align:right;
+    display:flex; flex-direction:column; align-items:flex-end; gap:6px;
+  }
+  .coin-badge{
+    display:flex; align-items:center; gap:8px;
+    font-size: 18px; font-weight:700;
+    text-shadow: 0 0 8px var(--gold);
+    color: var(--gold);
+  }
+  .coin-dot{
+    width:14px; height:14px; border-radius:50%;
+    background: var(--gold); box-shadow: 0 0 10px var(--gold);
+  }
+  #hud-bottomright{
+    bottom: 22px; right: 22px;
+    width: 220px;
+  }
+  .speed-readout{
+    text-align:right;
+    font-size: 46px; font-weight:800; font-style:italic;
+    text-shadow: 0 0 12px var(--cyan);
+    line-height: 0.9;
+  }
+  .speed-unit{ font-size:13px; font-weight:500; font-style:normal; opacity:0.6; letter-spacing:0.1em; }
+  .boost-track{
+    margin-top: 10px;
+    width:100%; height:10px; border-radius:6px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    overflow:hidden;
+    position:relative;
+  }
+  .boost-fill{
+    height:100%; width:0%;
+    background: linear-gradient(90deg, var(--violet), var(--magenta));
+    box-shadow: 0 0 12px var(--magenta);
+    transition: width 0.08s linear;
+  }
+  .boost-fill.ready{
+    background: linear-gradient(90deg, var(--gold), var(--magenta));
+    animation: boostBlink 0.5s ease-in-out infinite;
+  }
+  @keyframes boostBlink{ 0%,100%{opacity:1;} 50%{opacity:0.55;} }
+  .boost-label{
+    text-align:right; font-size:10.5px; letter-spacing:0.14em;
+    color: rgba(255,255,255,0.5); margin-top:4px;
+  }
+
+  #driftPopup{
+    position:absolute; top:38%; left:50%; transform:translate(-50%,-50%);
+    font-size: 30px; font-weight:800; font-style:italic; color: var(--gold);
+    text-shadow: 0 0 16px var(--gold);
+    opacity:0; pointer-events:none;
+  }
+
+  /* Speed lines — shown during nitro boost. From the original brief
+     ("Add speed lines" during boost) but never actually implemented before. */
+  #speedLines{
+    position:fixed; inset:0; z-index:15; pointer-events:none;
+    opacity:0;
+    background: repeating-conic-gradient(from 0deg,
+      rgba(255,255,255,0) 0deg 3deg,
+      rgba(255,255,255,0.10) 3.3deg 3.6deg);
+    mix-blend-mode: screen;
+    transition: opacity 0.15s ease-out;
+  }
+
+  #nitroPopup{
+    position:absolute; top:46%; left:50%; transform:translate(-50%,-50%);
+    font-size: 26px; font-weight:800; font-style:italic; color: var(--cyan);
+    text-shadow: 0 0 16px var(--cyan);
+    opacity:0; pointer-events:none;
+  }
+
+  #countdown{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    font-size: 120px; font-weight:800; font-style:italic; color:#fff;
+    text-shadow: 0 0 30px var(--magenta);
+  }
+
+  /* ---------- Touch Controls ---------- */
+  #touchControls{
+    position:fixed; inset:0; z-index:30; pointer-events:none;
+    display:none;
+  }
+  #touchControls.active{ display:block; }
+  .tbtn{
+    position:absolute; pointer-events:auto;
+    border-radius:50%;
+    border:1.5px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.06);
+    backdrop-filter: blur(2px);
+    display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:22px; font-weight:800;
+    -webkit-user-select:none;
+  }
+  .tbtn:active{ background: rgba(255,255,255,0.18); }
+  #tLeft{ left:18px; bottom:100px; width:74px; height:74px; }
+  #tRight{ left:100px; bottom:100px; width:74px; height:74px; }
+  #tBrake{ right:18px; bottom:180px; width:74px; height:74px; border-color: rgba(255,80,80,0.4); }
+  #tGas{ right:100px; bottom:100px; width:90px; height:90px; border-color: var(--cyan); box-shadow:0 0 18px rgba(0,240,255,0.25); }
+  #tBoost{ right:18px; bottom:100px; width:74px; height:74px; border-color: var(--magenta); box-shadow:0 0 18px rgba(255,46,146,0.25); }
+
+  /* ---------- FINISH SCREEN ---------- */
+  #finishScreen{
+    position:fixed; inset:0; z-index:60;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background: rgba(5,3,10,0.92);
+    text-align:center; color:#fff;
+  }
+  #finishScreen h1{
+    font-size: clamp(36px,8vw,64px);
+    font-style:italic; font-weight:800; margin:0 0 6px;
+    text-shadow: 0 0 24px var(--magenta);
+  }
+  .finish-stat{
+    font-size: 16px; color: rgba(255,255,255,0.7);
+    margin: 4px 0; letter-spacing:0.04em;
+  }
+  .finish-stat b{ color: var(--cyan); }
+
+  #billboardTag{
+    position:absolute; bottom: 46px; left:0; right:0;
+    text-align:center; color: rgba(255,255,255,0.25);
+    font-size: 10.5px; letter-spacing:0.1em;
+  }
+
+  @media (max-width: 720px){
+    .controls-legend{ display:none; }
+  }

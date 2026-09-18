@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>KAGEURI: NEON RUN</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <div id="startScreen">
+    <div class="kagueri-title display">KAGEURI</div>
+    <div class="kagueri-sub">N E O N &nbsp; R U N</div>
+
+    <div class="bike-select-row" id="bikeSelectRow"></div>
+
+    <div class="start-btn" id="startBtn">START RACE</div>
+
+    <div class="controls-legend">
+      <div><b>W / ↑</b> Accelerate &nbsp;&nbsp; <b>S / ↓</b> Brake</div>
+      <div><b>A D / ← →</b> Steer &nbsp;&nbsp; <b>SHIFT</b> Drift</div>
+      <div><b>SPACE</b> Boost (when charged)</div>
+    </div>
+
+    <div class="credit-line">KAGEURI · NEON RUN — DESIGNED &amp; BUILT BY @aloba_tomiwa</div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="speedLines"></div>
+    <div class="hud-panel" id="hud-topleft">
+      <div class="lap-badge" id="lapLabel">LAP 1 / 3</div>
+      <div class="pos-badge" id="posLabel">1<sup>ST</sup></div>
+    </div>
+    <div class="hud-panel" id="hud-topright">
+      <div class="coin-badge"><span class="coin-dot"></span><span id="coinLabel">0</span></div>
+    </div>
+    <div class="hud-panel" id="hud-bottomright">
+      <div class="speed-readout"><span id="speedLabel">0</span><span class="speed-unit"> KM/H</span></div>
+      <div class="boost-track"><div class="boost-fill" id="boostFill"></div></div>
+      <div class="boost-label" id="boostLabel">NITRO</div>
+    </div>
+    <div id="driftPopup">NICE DRIFT!</div>
+    <div id="nitroPopup">NITRO +25!</div>
+    <div id="countdown" class="hidden">3</div>
+  </div>
+
+  <div id="touchControls">
+    <div class="tbtn" id="tLeft">◀</div>
+    <div class="tbtn" id="tRight">▶</div>
+    <div class="tbtn" id="tBrake">✕</div>
+    <div class="tbtn" id="tGas">▲</div>
+    <div class="tbtn" id="tBoost">⚡</div>
+  </div>
+
+  <div id="finishScreen" class="hidden">
+    <h1 id="finishTitle">RACE COMPLETE</h1>
+    <div class="finish-stat">FINISHED <b id="finishPos">1ST</b></div>
+    <div class="finish-stat">TIME <b id="finishTime">00:00.0</b></div>
+    <div class="finish-stat">COINS COLLECTED <b id="finishCoins">0</b></div>
+    <div class="start-btn" id="restartBtn" style="margin-top:28px;">RACE AGAIN</div>
+  </div>
+
+  <div id="billboardTag">KAGEURI — NEON RUN · A COMMUNITY WEB3 RACER</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
