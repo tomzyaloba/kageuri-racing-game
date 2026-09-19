@@ -66,6 +66,19 @@
   });
   const totalTrackLength = trackCurve.getLength();
 
+  // Precompute local track curvature once. AI used to sample the spline twice
+  // for every AI racer on every frame, which is unnecessary work.
+  const trackTurnSharpness = new Float32Array(TRACK_SAMPLES);
+  for(let i=0;i<TRACK_SAMPLES;i++){
+    const a = trackTangents[i];
+    const b = trackTangents[(i + 18) % TRACK_SAMPLES];
+    trackTurnSharpness[i] = 1 - a.dot(b);
+  }
+  function getTurnSharpness(u){
+    const idx = Math.floor((((u % 1) + 1) % 1) * TRACK_SAMPLES) % TRACK_SAMPLES;
+    return trackTurnSharpness[idx];
+  }
+
   // Approximate "u" (0..1) marker for tunnel & ramp sections, used for
   // visual triggers (fog change, airborne behavior).
   function nearestU(point){
@@ -98,8 +111,16 @@
   const canvas = document.createElement('canvas');
   document.getElementById('app').appendChild(canvas);
 
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, powerPreference:'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // Keep retina rendering, but avoid the expensive 2x/3x framebuffer on phones.
+  // Low-memory devices use 1x; stronger devices can use up to 1.5x.
+  const deviceMemory = navigator.deviceMemory || 8;
+  const DPR = Math.min(window.devicePixelRatio || 1, deviceMemory <= 4 ? 1 : 1.5);
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: DPR > 1 ? true : false,
+    powerPreference:'high-performance',
+  });
+  renderer.setPixelRatio(DPR);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(COLORS.void, 1);
 
@@ -907,35 +928,33 @@
     r.mesh.userData.underglow.material.opacity = r.drifting ? 0.85 : 0.5;
 
     // --- collectibles ---
-    coins.forEach(c=>{
-      if(!c.active) return;
-      let du = Math.abs(c.u - r.u);
-      if(du>0.5) du = 1-du;
-      if(du < 0.006 && Math.abs(c.mesh.position.distanceTo(r.mesh.position)) < 2.4){
-        c.active = false; c.mesh.visible = false;
-        r.coinCount += 1;
-      } else {
-        c.mesh.rotation.z += dt*3;
-      }
-    });
+    // Only the player needs collision checks. Pickup animation is handled once
+    // globally in the main loop instead of once per racer.
     let gotNitro = false;
-    boostPickups.forEach(b=>{
-      if(b.cooldown>0){
-        b.cooldown -= dt;
-        if(b.cooldown<=0){ b.mesh.visible=true; b.active=true; }
-        return;
+    if(r.isPlayer){
+      for(const c of coins){
+        if(!c.active) continue;
+        let du = Math.abs(c.u - r.u);
+        if(du > 0.5) du = 1 - du;
+        if(du < 0.006 && c.mesh.position.distanceTo(r.mesh.position) < 2.4){
+          c.active = false;
+          c.mesh.visible = false;
+          r.coinCount += 1;
+        }
       }
-      if(!b.active) return;
-      if(b.mesh.position.distanceTo(r.mesh.position) < 2.6){
-        b.active = false; b.mesh.visible = false; b.cooldown = 6;
-        r.boost = clamp(r.boost + PHYS.boostGainPickup, 0, 100);
-        if(r.isPlayer) gotNitro = true;
-      } else {
-        b.mesh.rotation.y += dt*4;
-        // pulsing nitro-canister glow so it reads as a distinct pickup, not a static prop
-        b.mesh.material.emissiveIntensity = 1.0 + Math.sin(globalTime*6 + b.u*20)*0.5;
+
+      for(const b of boostPickups){
+        if(b.cooldown > 0) continue;
+        if(!b.active) continue;
+        if(b.mesh.position.distanceTo(r.mesh.position) < 2.6){
+          b.active = false;
+          b.mesh.visible = false;
+          b.cooldown = 6;
+          r.boost = clamp(r.boost + PHYS.boostGainPickup, 0, 100);
+          gotNitro = true;
+        }
       }
-    });
+    }
 
     return {
       justDrifted: r.drifting && r.driftTime>0.35 && r.driftTime-dt<=0.35,
@@ -977,10 +996,7 @@
     const steerErr = clamp((desiredLateral - r.lateral)/4, -1, 1);
 
     // slow down for upcoming corners: sample curvature ahead
-    const lookAheadU = r.u + 0.02;
-    const a = sampleTrack(lookAheadU).tan;
-    const b = sampleTrack(lookAheadU+0.02).tan;
-    const turnSharpness = 1 - a.dot(b); // 0 straight, higher = sharper turn
+    const turnSharpness = getTurnSharpness(r.u + 0.02); // precomputed, 0 straight -> sharper turn
     const cornerSlow = clamp(1 - turnSharpness*8*r.skill, 0.35, 1);
 
     const throttle = cornerSlow;
@@ -1016,8 +1032,11 @@
     const lookAt = player.mesh.position.clone().add(new THREE.Vector3(0,1.6,0));
     camera.lookAt(lookAt);
     const targetFov = player.boosting ? 84 : 72;
-    camera.fov = lerp(camera.fov, targetFov, 1-Math.pow(0.0005,dt));
-    camera.updateProjectionMatrix();
+    const nextFov = lerp(camera.fov, targetFov, 1-Math.pow(0.0005,dt));
+    if(Math.abs(nextFov - camera.fov) > 0.01){
+      camera.fov = nextFov;
+      camera.updateProjectionMatrix();
+    }
   }
 
   // ---------------------------------------------------------------
@@ -1025,7 +1044,11 @@
   // ---------------------------------------------------------------
   let driftPopupTimer = 0;
   let nitroPopupTimer = 0;
+  let uiAccumulator = 0;
   function updateUI(dt){
+    uiAccumulator += dt;
+    if(uiAccumulator < 0.06) return;
+    uiAccumulator = 0;
     // position ranking
     const ranked = [...ALL_RACERS].sort((a,b)=>b.totalDistance - a.totalDistance);
     const pos = ranked.indexOf(player) + 1;
@@ -1062,6 +1085,21 @@
 
     globalTime += dt;
     particles.rotation.y += dt*0.01;
+
+    // Animate world pickups once per frame, not once per racer.
+    for(const c of coins){
+      if(c.active && c.mesh.visible) c.mesh.rotation.z += dt * 3;
+    }
+    for(const b of boostPickups){
+      if(b.cooldown > 0){
+        b.cooldown -= dt;
+        if(b.cooldown <= 0){ b.active = true; b.mesh.visible = true; }
+      }
+      if(b.active && b.mesh.visible){
+        b.mesh.rotation.y += dt * 4;
+        b.mesh.material.emissiveIntensity = 1.0 + Math.sin(globalTime*6 + b.u*20)*0.5;
+      }
+    }
 
     if(raceState === 'countdown'){
       countdownTimer += dt;
@@ -1152,6 +1190,7 @@
     camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(DPR);
   });
 
 })();
