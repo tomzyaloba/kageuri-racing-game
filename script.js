@@ -66,19 +66,6 @@
   });
   const totalTrackLength = trackCurve.getLength();
 
-  // Precompute local track curvature once. AI used to sample the spline twice
-  // for every AI racer on every frame, which is unnecessary work.
-  const trackTurnSharpness = new Float32Array(TRACK_SAMPLES);
-  for(let i=0;i<TRACK_SAMPLES;i++){
-    const a = trackTangents[i];
-    const b = trackTangents[(i + 18) % TRACK_SAMPLES];
-    trackTurnSharpness[i] = 1 - a.dot(b);
-  }
-  function getTurnSharpness(u){
-    const idx = Math.floor((((u % 1) + 1) % 1) * TRACK_SAMPLES) % TRACK_SAMPLES;
-    return trackTurnSharpness[idx];
-  }
-
   // Approximate "u" (0..1) marker for tunnel & ramp sections, used for
   // visual triggers (fog change, airborne behavior).
   function nearestU(point){
@@ -111,16 +98,8 @@
   const canvas = document.createElement('canvas');
   document.getElementById('app').appendChild(canvas);
 
-  // Keep retina rendering, but avoid the expensive 2x/3x framebuffer on phones.
-  // Low-memory devices use 1x; stronger devices can use up to 1.5x.
-  const deviceMemory = navigator.deviceMemory || 8;
-  const DPR = Math.min(window.devicePixelRatio || 1, deviceMemory <= 4 ? 1 : 1.5);
-  const renderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: DPR > 1 ? true : false,
-    powerPreference:'high-performance',
-  });
-  renderer.setPixelRatio(DPR);
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, powerPreference:'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(COLORS.void, 1);
 
@@ -271,8 +250,15 @@
     instB.instanceMatrix.needsUpdate = true;
     scene.add(instA, instB);
 
-    // window glow strips (fake — thin emissive planes on a subset of buildings)
-    // kept simple: colored point lights scattered as "holographic ad" glows
+    // window glow strips: previously 18 real THREE.PointLights here — with
+    // MeshStandardMaterial, every light in the scene is evaluated for every
+    // pixel of every surface, so 18 extra lights was a serious, scene-wide
+    // performance cost. Replaced with additive-blended glow sprites: visually
+    // similar ambient color near the buildings, but essentially free (no
+    // per-pixel lighting calculation, just a transparent textured plane).
+    const glowSpriteMat = (color) => new THREE.SpriteMaterial({
+      color, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
     for(let i=0;i<18;i++){
       const u = i/18;
       const s = sampleTrack(u);
@@ -281,9 +267,10 @@
       const pos = s.pos.clone().addScaledVector(side, sign*(TRACK_WIDTH/2+6));
       pos.y = 8 + Math.random()*10;
       const color = [COLORS.magenta, COLORS.cyan, COLORS.gold][i%3];
-      const l = new THREE.PointLight(color, 0.9, 40, 2);
-      l.position.copy(pos);
-      scene.add(l);
+      const sprite = new THREE.Sprite(glowSpriteMat(color));
+      sprite.scale.set(14, 14, 1);
+      sprite.position.copy(pos);
+      scene.add(sprite);
     }
   }
   buildCity();
@@ -350,12 +337,26 @@
     const tube = new THREE.Mesh(tubeGeo, tubeMat);
     scene.add(tube);
 
-    // ring lights inside tunnel
+    // Ring lights inside tunnel — was 11 real PointLights (i<=10), each one
+    // adding to the per-pixel lighting cost for every surface in the whole
+    // scene, not just the tunnel. Cut to 3 real lights (still gives the
+    // tunnel actual illumination) plus cheap emissive glow rings for the
+    // rest of the visual rhythm.
     for(let i=0;i<=10;i++){
       const p = curve.getPointAt(i/10);
-      const l = new THREE.PointLight(i%2===0?COLORS.cyan:COLORS.magenta, 1.2, 30, 2);
-      l.position.copy(p).add(new THREE.Vector3(0,6,0));
-      scene.add(l);
+      if(i % 4 === 0){ // 3 real lights total (i=0,4,8) instead of 11
+        const l = new THREE.PointLight(i%2===0?COLORS.cyan:COLORS.magenta, 1.4, 35, 2);
+        l.position.copy(p).add(new THREE.Vector3(0,6,0));
+        scene.add(l);
+      }
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: i%2===0?COLORS.cyan:COLORS.magenta, transparent:true, opacity:0.5,
+        blending: THREE.AdditiveBlending, depthWrite:false, side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(new THREE.RingGeometry(TRACK_WIDTH*0.8, TRACK_WIDTH*0.86, 24), ringMat);
+      ring.position.copy(p).add(new THREE.Vector3(0,6,0));
+      ring.lookAt(ring.position.clone().add(curve.getTangentAt(i/10)));
+      scene.add(ring);
     }
   }
   buildTunnel();
@@ -786,6 +787,7 @@
 
   function startRace(){
     setupRace();
+    cameraBaseInit = false; // snap camera to the new grid instantly on restart, rather than smoothly swooping from wherever the previous race ended
     coins.forEach(c=>{ c.active=true; c.mesh.visible=true; });
     boostPickups.forEach(b=>{ b.active=true; b.mesh.visible=true; b.cooldown=0; });
     el.startScreen.classList.add('hidden');
@@ -928,33 +930,46 @@
     r.mesh.userData.underglow.material.opacity = r.drifting ? 0.85 : 0.5;
 
     // --- collectibles ---
-    // Only the player needs collision checks. Pickup animation is handled once
-    // globally in the main loop instead of once per racer.
+    // IMPORTANT: updateRacer runs once per racer (player + 3 AI = 4x/frame),
+    // but coins/boostPickups are SHARED world objects, not per-racer state.
+    // The rotation increments and the cooldown countdown below were
+    // previously unconditional, so they ran 4 times per rendered frame —
+    // coins/pickups spun 4x faster than intended, and a pickup's "6 second"
+    // respawn cooldown actually elapsed in ~1.5 real seconds. Gating these
+    // specific lines on r.isPlayer makes them run exactly once per frame
+    // (the player always updates first, exactly once) while collision
+    // detection still correctly runs for every racer, including AI.
+    coins.forEach(c=>{
+      if(!c.active) return;
+      let du = Math.abs(c.u - r.u);
+      if(du>0.5) du = 1-du;
+      if(du < 0.006 && Math.abs(c.mesh.position.distanceTo(r.mesh.position)) < 2.4){
+        c.active = false; c.mesh.visible = false;
+        r.coinCount += 1;
+      } else if(r.isPlayer){
+        c.mesh.rotation.z += dt*3;
+      }
+    });
     let gotNitro = false;
-    if(r.isPlayer){
-      for(const c of coins){
-        if(!c.active) continue;
-        let du = Math.abs(c.u - r.u);
-        if(du > 0.5) du = 1 - du;
-        if(du < 0.006 && c.mesh.position.distanceTo(r.mesh.position) < 2.4){
-          c.active = false;
-          c.mesh.visible = false;
-          r.coinCount += 1;
+    boostPickups.forEach(b=>{
+      if(b.cooldown>0){
+        if(r.isPlayer){
+          b.cooldown -= dt;
+          if(b.cooldown<=0){ b.mesh.visible=true; b.active=true; }
         }
+        return;
       }
-
-      for(const b of boostPickups){
-        if(b.cooldown > 0) continue;
-        if(!b.active) continue;
-        if(b.mesh.position.distanceTo(r.mesh.position) < 2.6){
-          b.active = false;
-          b.mesh.visible = false;
-          b.cooldown = 6;
-          r.boost = clamp(r.boost + PHYS.boostGainPickup, 0, 100);
-          gotNitro = true;
-        }
+      if(!b.active) return;
+      if(b.mesh.position.distanceTo(r.mesh.position) < 2.6){
+        b.active = false; b.mesh.visible = false; b.cooldown = 6;
+        r.boost = clamp(r.boost + PHYS.boostGainPickup, 0, 100);
+        if(r.isPlayer) gotNitro = true;
+      } else if(r.isPlayer){
+        b.mesh.rotation.y += dt*4;
+        // pulsing nitro-canister glow so it reads as a distinct pickup, not a static prop
+        b.mesh.material.emissiveIntensity = 1.0 + Math.sin(globalTime*6 + b.u*20)*0.5;
       }
-    }
+    });
 
     return {
       justDrifted: r.drifting && r.driftTime>0.35 && r.driftTime-dt<=0.35,
@@ -996,7 +1011,10 @@
     const steerErr = clamp((desiredLateral - r.lateral)/4, -1, 1);
 
     // slow down for upcoming corners: sample curvature ahead
-    const turnSharpness = getTurnSharpness(r.u + 0.02); // precomputed, 0 straight -> sharper turn
+    const lookAheadU = r.u + 0.02;
+    const a = sampleTrack(lookAheadU).tan;
+    const b = sampleTrack(lookAheadU+0.02).tan;
+    const turnSharpness = 1 - a.dot(b); // 0 straight, higher = sharper turn
     const cornerSlow = clamp(1 - turnSharpness*8*r.skill, 0.35, 1);
 
     const throttle = cornerSlow;
@@ -1009,6 +1027,16 @@
   // ---------------------------------------------------------------
   // CAMERA
   // ---------------------------------------------------------------
+  // Separate the smoothed "true" follow position from any per-frame shake
+  // offset. Previously the boost-shake jitter was added directly onto
+  // camera.position, which is also the lerp's own starting point next frame —
+  // so a fraction of each frame's shake never fully corrected out and could
+  // accumulate into the smoothed path over a sustained boost. Keeping a
+  // dedicated base vector means shake is purely cosmetic each frame and never
+  // feeds back into the smoothing.
+  const cameraBase = new THREE.Vector3();
+  let cameraBaseInit = false;
+
   function updateCamera(dt){
     // IMPORTANT: uses the track tangent at the player's position, NOT the car
     // mesh's cosmetic rotation. The mesh rotation includes drift-yaw wobble;
@@ -1022,9 +1050,12 @@
     const desired = player.mesh.position.clone()
       .addScaledVector(back, 9.5)
       .add(new THREE.Vector3(0, 4.2, 0));
-    camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
+    if(!cameraBaseInit){ cameraBase.copy(desired); cameraBaseInit = true; }
+    cameraBase.lerp(desired, 1 - Math.pow(0.001, dt));
+    camera.position.copy(cameraBase);
     // Camera shake during nitro boost — from the original brief ("add camera
-    // shake") but never actually implemented before.
+    // shake") but never actually implemented before. Applied fresh on top of
+    // cameraBase each frame, never accumulated into it.
     if(player.boosting){
       camera.position.x += (Math.random()-0.5) * 0.18;
       camera.position.y += (Math.random()-0.5) * 0.12;
@@ -1032,11 +1063,8 @@
     const lookAt = player.mesh.position.clone().add(new THREE.Vector3(0,1.6,0));
     camera.lookAt(lookAt);
     const targetFov = player.boosting ? 84 : 72;
-    const nextFov = lerp(camera.fov, targetFov, 1-Math.pow(0.0005,dt));
-    if(Math.abs(nextFov - camera.fov) > 0.01){
-      camera.fov = nextFov;
-      camera.updateProjectionMatrix();
-    }
+    camera.fov = lerp(camera.fov, targetFov, 1-Math.pow(0.0005,dt));
+    camera.updateProjectionMatrix();
   }
 
   // ---------------------------------------------------------------
@@ -1044,11 +1072,7 @@
   // ---------------------------------------------------------------
   let driftPopupTimer = 0;
   let nitroPopupTimer = 0;
-  let uiAccumulator = 0;
   function updateUI(dt){
-    uiAccumulator += dt;
-    if(uiAccumulator < 0.06) return;
-    uiAccumulator = 0;
     // position ranking
     const ranked = [...ALL_RACERS].sort((a,b)=>b.totalDistance - a.totalDistance);
     const pos = ranked.indexOf(player) + 1;
@@ -1085,21 +1109,6 @@
 
     globalTime += dt;
     particles.rotation.y += dt*0.01;
-
-    // Animate world pickups once per frame, not once per racer.
-    for(const c of coins){
-      if(c.active && c.mesh.visible) c.mesh.rotation.z += dt * 3;
-    }
-    for(const b of boostPickups){
-      if(b.cooldown > 0){
-        b.cooldown -= dt;
-        if(b.cooldown <= 0){ b.active = true; b.mesh.visible = true; }
-      }
-      if(b.active && b.mesh.visible){
-        b.mesh.rotation.y += dt * 4;
-        b.mesh.material.emissiveIntensity = 1.0 + Math.sin(globalTime*6 + b.u*20)*0.5;
-      }
-    }
 
     if(raceState === 'countdown'){
       countdownTimer += dt;
@@ -1190,7 +1199,6 @@
     camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(DPR);
   });
 
 })();
