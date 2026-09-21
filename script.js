@@ -715,7 +715,7 @@
     accel: 26,
     brakeDecel: 46,
     coastDecel: 10,
-    steerRate: 1.9,         // rad/sec at low speed
+    steerRate: 1.5,         // rad/sec at low speed — reduced from 1.9 for a calmer response
     lateralGripSpeed: 34,   // lateral units/sec correction toward heading
     driftLateralBoost: 1.6,
     boostDrainPerSec: 34,   // consumes 0-100 meter over ~3s
@@ -807,12 +807,31 @@
     // controls: {throttle:-1..1, steer:-1..1, drift:bool, boostReq:bool}
     const up = new THREE.Vector3(0,1,0);
 
+    // Smooth the raw steer/throttle input before using it anywhere below.
+    // Keyboard input is binary — a key is either fully pressed or not — so
+    // controls.steer/throttle jump instantly between -1/0/1 with zero
+    // ramp-up. That raw, instantly-snapping value was driving the bike's
+    // actual lateral position directly, which is what made keyboard driving
+    // feel twitchy/hard to control: a light tap at speed produced a large,
+    // immediate swing. Easing it here gives an analog-stick-like ramp
+    // in and out, without changing how AI (which already produces smooth,
+    // continuous steer values) behaves in any meaningful way.
+    if(r.steerSmooth === undefined) r.steerSmooth = 0;
+    // Still too twitchy after the first easing pass, so pushed considerably
+    // further: steer now ramps to ~90% deflection over ~600ms (was ~300ms),
+    // throttle over ~500ms (was ~370ms).
+    r.steerSmooth = lerp(r.steerSmooth, controls.steer, 1 - Math.pow(0.02, dt));
+    if(r.throttleSmooth === undefined) r.throttleSmooth = 0;
+    r.throttleSmooth = lerp(r.throttleSmooth, controls.throttle, 1 - Math.pow(0.01, dt));
+    const steer = r.steerSmooth;
+    const throttle = r.throttleSmooth;
+
     // --- speed ---
     const targetMax = r.boosting ? PHYS.boostMaxSpeed : PHYS.maxSpeed;
-    if(controls.throttle > 0){
-      r.speed += PHYS.accel * controls.throttle * dt;
-    } else if(controls.throttle < 0){
-      r.speed += PHYS.brakeDecel * controls.throttle * dt;
+    if(throttle > 0){
+      r.speed += PHYS.accel * throttle * dt;
+    } else if(throttle < 0){
+      r.speed += PHYS.brakeDecel * throttle * dt;
     } else {
       r.speed -= Math.sign(r.speed) * PHYS.coastDecel * dt;
     }
@@ -834,9 +853,9 @@
     }
 
     // --- drift state ---
-    const wantDrift = controls.drift && Math.abs(r.speed) > PHYS.maxSpeed*0.35 && Math.abs(controls.steer) > 0.15;
+    const wantDrift = controls.drift && Math.abs(r.speed) > PHYS.maxSpeed*0.35 && Math.abs(steer) > 0.15;
     if(wantDrift && !r.drifting){
-      r.drifting = true; r.driftDir = Math.sign(controls.steer); r.driftTime = 0;
+      r.drifting = true; r.driftDir = Math.sign(steer); r.driftTime = 0;
     }
     if(!wantDrift && r.drifting){
       r.drifting = false;
@@ -851,13 +870,19 @@
     r.totalDistance = r.lap * totalTrackLength + r.u*totalTrackLength;
 
     // --- lateral movement (steer relative to track centerline) ---
-    const steerPower = controls.steer * PHYS.steerRate * (0.4 + 0.6*Math.min(1,Math.abs(r.speed)/20));
+    const steerPower = steer * PHYS.steerRate * (0.4 + 0.6*Math.min(1,Math.abs(r.speed)/20));
     const driftMul = r.drifting ? PHYS.driftLateralBoost : 1;
     // Lateral rate scales purely with actual speed now — it previously had a
     // hard floor (Math.max(2, ...)) meaning a fully STATIONARY car (speed 0)
     // could still slide sideways just from steering input, which looked like
     // random unpredictable drift whenever the car was slow/stopped.
-    r.lateral += steerPower * driftMul * (Math.abs(r.speed) * 0.55) * dt;
+    // Sensitivity trimmed slightly (0.55 -> 0.46) on top of the input easing
+    // above — at top speed, a full hard-left/right deflection was still a
+    // very large, fast lateral swing even once the input itself ramps in.
+    // Sensitivity cut further (0.46 -> 0.32) — the first trim wasn't enough;
+    // combined with the longer input ramp above and the lower steerRate,
+    // this should meaningfully calm down high-speed steering response.
+    r.lateral += steerPower * driftMul * (Math.abs(r.speed) * 0.32) * dt;
     r.lateral = clamp(r.lateral, -(TRACK_WIDTH/2-1.2), TRACK_WIDTH/2-1.2);
 
     // --- sample track & place car ---
@@ -896,7 +921,7 @@
     // read as jerky "not smooth" driving. lerpAngle handles the ±π wrap so the
     // easing never whips the long way around.
     const baseHeading = Math.atan2(s.tan.x, s.tan.z);
-    const desiredDriftYaw = r.drifting ? r.driftDir * 0.5 : controls.steer*0.12;
+    const desiredDriftYaw = r.drifting ? r.driftDir * 0.5 : steer*0.12;
     if(r.smoothDriftYaw === undefined) r.smoothDriftYaw = desiredDriftYaw;
     r.smoothDriftYaw = lerp(r.smoothDriftYaw, desiredDriftYaw, 1 - Math.pow(0.0008, dt));
 
@@ -908,7 +933,7 @@
     // car body would, so this is deliberately a much larger angle than the
     // old car's cosmetic roll (0.06/0.08) — clamped so it reads as a lean,
     // not a crash.
-    const targetLean = clamp(-controls.steer * 0.4 - (r.drifting? r.driftDir*0.45:0), -0.55, 0.55);
+    const targetLean = clamp(-steer * 0.4 - (r.drifting? r.driftDir*0.45:0), -0.55, 0.55);
     if(r.smoothLean === undefined) r.smoothLean = 0;
     r.smoothLean = lerp(r.smoothLean, targetLean, 1 - Math.pow(0.002, dt));
     r.mesh.rotation.z = r.smoothLean;
@@ -917,7 +942,7 @@
     // Front fork turns visually with steering input — a bike-specific touch
     // the old car mesh had no equivalent of.
     if(r.mesh.userData.frontFork){
-      const targetForkYaw = clamp(controls.steer * 0.5, -0.5, 0.5);
+      const targetForkYaw = clamp(steer * 0.5, -0.5, 0.5);
       r.mesh.userData.frontFork.rotation.y = lerp(r.mesh.userData.frontFork.rotation.y || 0, targetForkYaw, 1 - Math.pow(0.001, dt));
     }
 
